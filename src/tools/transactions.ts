@@ -29,7 +29,7 @@ const ALL_TRANSACTION_TYPES = [
 export function register(server: McpServer, client: SchwabClient): void {
   server.tool(
     "get_transactions",
-    "Get transaction history (trades, deposits, dividends, etc.) for an account. Filter by date range (max 60 days past), type, symbol. Types: TRADE, DIVIDEND_OR_INTEREST, ACH_RECEIPT, ACH_DISBURSEMENT, etc.",
+    "Get transaction history (trades, deposits, dividends, etc.) for an account. Filter by date range (max 1 year range per Schwab), type, symbol. Types: TRADE, DIVIDEND_OR_INTEREST, ACH_RECEIPT, ACH_DISBURSEMENT, etc.",
     {
       account_hash: z
         .string()
@@ -40,7 +40,7 @@ export function register(server: McpServer, client: SchwabClient): void {
         .string()
         .optional()
         .describe(
-          "Start date (YYYY-MM-DD or ISO-8601 date-time, max 60 days past, default 60 days ago). Sent to Schwab as a full ISO-8601 timestamp.",
+          "Start date (YYYY-MM-DD or ISO-8601 date-time, default 60 days ago; Schwab allows up to a 1-year range). Sent to Schwab as a full ISO-8601 timestamp.",
         ),
       end_date: z
         .string()
