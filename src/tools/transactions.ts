@@ -5,6 +5,27 @@ import { toSchwabDateTime } from "./utils.js";
 
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
 
+// Schwab's transactions endpoint requires the `types` query param and accepts
+// a single TransactionType per request. To return "all" transactions we query
+// each type and merge. Full enum from the Trader API spec (TransactionType).
+const ALL_TRANSACTION_TYPES = [
+  "TRADE",
+  "RECEIVE_AND_DELIVER",
+  "DIVIDEND_OR_INTEREST",
+  "ACH_RECEIPT",
+  "ACH_DISBURSEMENT",
+  "CASH_RECEIPT",
+  "CASH_DISBURSEMENT",
+  "ELECTRONIC_FUND",
+  "WIRE_OUT",
+  "WIRE_IN",
+  "JOURNAL",
+  "MEMORANDUM",
+  "MARGIN_CALL",
+  "MONEY_MARKET",
+  "SMA_ADJUSTMENT",
+] as const;
+
 export function register(server: McpServer, client: SchwabClient): void {
   server.tool(
     "get_transactions",
@@ -46,14 +67,41 @@ export function register(server: McpServer, client: SchwabClient): void {
       const startDate =
         toSchwabDateTime(start_date, "start") ??
         new Date(now.getTime() - SIXTY_DAYS_MS).toISOString();
-      const result = await client.getTransactions(account_hash, {
-        startDate,
-        endDate,
-        types: transaction_type,
-        symbol,
-      });
+
+      // `types` is required by Schwab and takes one TransactionType per call.
+      // Query each requested type (all of them when unfiltered) and merge; an
+      // error on any call propagates rather than silently yielding [].
+      const types = transaction_type
+        ? transaction_type.split(",").map((t) => t.trim()).filter(Boolean)
+        : [...ALL_TRANSACTION_TYPES];
+
+      const responses = await Promise.all(
+        types.map((type) =>
+          client.getTransactions(account_hash, {
+            startDate,
+            endDate,
+            types: type,
+            symbol,
+          }),
+        ),
+      );
+
+      const merged: unknown[] = [];
+      const seen = new Set<string>();
+      for (const resp of responses) {
+        if (!Array.isArray(resp)) continue;
+        for (const txn of resp) {
+          const id = String((txn as Record<string, unknown>)?.activityId ?? "");
+          const key = id || JSON.stringify(txn);
+          if (!seen.has(key)) {
+            seen.add(key);
+            merged.push(txn);
+          }
+        }
+      }
+
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        content: [{ type: "text" as const, text: JSON.stringify(merged) }],
       };
     },
   );
