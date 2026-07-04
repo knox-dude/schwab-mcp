@@ -73,6 +73,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "commander": "^13.1.0",
+    "selfsigned": "^5.5.0",
     "technicalindicators": "^3.1.0",
     "zod": "^3.24.4"
   },

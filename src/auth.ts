@@ -1,8 +1,6 @@
 import { execSync } from "node:child_process";
 import { createServer, type Server } from "node:https";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import selfsigned from "selfsigned";
 import type { OAuthToken } from "./types.js";
 import { TokenManager } from "./tokens.js";
 
@@ -211,7 +209,9 @@ export async function clientFromLoginFlow(
     if (platform === "darwin") {
       execSync(`open "${authUrl}"`);
     } else if (platform === "win32") {
-      execSync(`start "${authUrl}"`);
+      // On cmd.exe the first quoted arg to `start` is the window title, so an
+      // empty title must precede the URL or the browser never opens.
+      execSync(`start "" "${authUrl}"`);
     } else {
       execSync(`xdg-open "${authUrl}"`);
     }
@@ -222,6 +222,7 @@ export async function clientFromLoginFlow(
   }
 
   // Start local HTTPS server to capture callback
+  const tls = await generateSelfSignedTls();
   const token = await new Promise<OAuthToken>((resolve, reject) => {
     let server: Server;
 
@@ -235,7 +236,6 @@ export async function clientFromLoginFlow(
       );
     }, callbackTimeout * 1000);
 
-    const tls = generateSelfSignedTls();
     server = createServer(
       { cert: tls.cert, key: tls.key },
       async (req, res) => {
@@ -333,29 +333,19 @@ export async function easyClient(opts: AuthOptions): Promise<OAuthToken> {
   return clientFromLoginFlow(opts);
 }
 
-// Generate a self-signed certificate at runtime for the local OAuth callback server.
-// The cert/key are created in a temp directory and cleaned up after use.
+// Generate a self-signed certificate at runtime for the local OAuth callback
+// server. Done in pure JS (no `openssl` shell-out) so it works identically on
+// Windows, macOS, and Linux without depending on a system openssl on PATH.
 let _cachedTls: { cert: string; key: string } | null = null;
 
-function generateSelfSignedTls(): { cert: string; key: string } {
+async function generateSelfSignedTls(): Promise<{ cert: string; key: string }> {
   if (_cachedTls) return _cachedTls;
 
-  const dir = mkdtempSync(join(tmpdir(), "schwab-mcp-tls-"));
-  const keyPath = join(dir, "key.pem");
-  const certPath = join(dir, "cert.pem");
+  const pems = await selfsigned.generate(
+    [{ name: "commonName", value: "127.0.0.1" }],
+    { keySize: 2048, algorithm: "sha256" },
+  );
 
-  try {
-    execSync(
-      `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj '/CN=127.0.0.1' 2>/dev/null`,
-    );
-
-    const cert = readFileSync(certPath, "utf-8");
-    const key = readFileSync(keyPath, "utf-8");
-    _cachedTls = { cert, key };
-    return _cachedTls;
-  } finally {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {}
-  }
+  _cachedTls = { cert: pems.cert, key: pems.private };
+  return _cachedTls;
 }
