@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { SchwabClient } from "../client.js";
-import { parseDate } from "./utils.js";
+import { toSchwabDateTime } from "./utils.js";
+
+const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
 
 export function register(server: McpServer, client: SchwabClient): void {
   server.tool(
@@ -23,7 +25,7 @@ export function register(server: McpServer, client: SchwabClient): void {
 
   server.tool(
     "get_orders",
-    "Returns order history for an account. Filter by date range (max 60 days past) and status. Status options: AWAITING_PARENT_ORDER, AWAITING_CONDITION, AWAITING_STOP_CONDITION, WORKING, FILLED, CANCELED, EXPIRED, etc. Use tomorrow's date as to_date for today's orders.",
+    "Returns order history for an account. Filter by date range (max 60 days past) and status. Status options: AWAITING_PARENT_ORDER, AWAITING_CONDITION, AWAITING_STOP_CONDITION, WORKING, FILLED, CANCELED, EXPIRED, etc. Defaults to the last 60 days; a plain to_date covers through the end of that day, so today's orders are included.",
     {
       account_hash: z
         .string()
@@ -37,11 +39,15 @@ export function register(server: McpServer, client: SchwabClient): void {
       from_date: z
         .string()
         .optional()
-        .describe("Start date for orders (YYYY-MM-DD, max 60 days past)"),
+        .describe(
+          "Start date for orders (YYYY-MM-DD or ISO-8601 date-time, max 60 days past, default 60 days ago). Sent to Schwab as a full ISO-8601 timestamp.",
+        ),
       to_date: z
         .string()
         .optional()
-        .describe("End date for orders (YYYY-MM-DD)"),
+        .describe(
+          "End date for orders (YYYY-MM-DD or ISO-8601 date-time, default now). Sent to Schwab as a full ISO-8601 timestamp.",
+        ),
       status: z
         .string()
         .optional()
@@ -50,8 +56,13 @@ export function register(server: McpServer, client: SchwabClient): void {
         ),
     },
     async ({ account_hash, max_results, from_date, to_date, status }) => {
-      const fromDate = parseDate(from_date);
-      const toDate = parseDate(to_date);
+      // Schwab's orders endpoint requires both bounds as full ISO-8601
+      // date-times. Default to the maximum supported window (last 60 days).
+      const now = new Date();
+      const toDate = toSchwabDateTime(to_date, "end") ?? now.toISOString();
+      const fromDate =
+        toSchwabDateTime(from_date, "start") ??
+        new Date(now.getTime() - SIXTY_DAYS_MS).toISOString();
 
       // If multiple statuses, make separate calls and merge
       if (status && status.includes(",")) {
